@@ -26,24 +26,31 @@ typedef struct process{
 
 process *processList = NULL; 
 
-void addProcess(process** procList, cmdLine* cmd, pid_t pid) {
+void addProcess(process** process_list, cmdLine* cmd, pid_t pid) {
     process *new_process = (process*)malloc(sizeof(process));
     if (!new_process) {
         perror("ERROR: malloc() failed");
         exit(1);
     }
+    
     new_process->cmd = cmd;
     new_process->pid = pid;
     new_process->status = RUNNING;
-    new_process->next = *procList;
-    *procList = new_process;
+    new_process->next = *process_list;
+    *process_list = new_process;
 }
 
-void printProcess(process *Process){
-    if ((Process) && ((Process->cmd->argCount) > 0)){
+void printProcess(process *Process)
+{
+    if ((Process) && ((Process->cmd->argCount) > 0))
+    {
         char command[200] = "";
-        for (int i = 0; i < (Process->cmd->argCount); ++i){
-            if (i > 0){
+
+        
+        for (int i = 0; i < (Process->cmd->argCount); ++i)
+        {
+            if (i > 0)
+            {
                 strcat(command, " ");
             }
             strcat(command, Process->cmd->arguments[i]);
@@ -54,10 +61,12 @@ void printProcess(process *Process){
         {
             statusString = "Terminated";
         }
-        else if (Process->status == RUNNING){
+        else if (Process->status == RUNNING)
+        {
             statusString = "Running";
         }
-        else{
+        else
+        {
             statusString = "Suspended";
         }
 
@@ -67,8 +76,10 @@ void printProcess(process *Process){
 
 void freeProcess(process *process)
 {
-    if (process){
-        if (process->cmd){
+    if (process)
+    {
+        if (process->cmd)
+        {
             process->cmd->next = NULL;
             freeCmdLines(process->cmd);
         }
@@ -77,23 +88,31 @@ void freeProcess(process *process)
     }
 }
 
-void deleteTerminatedProcesses(process **procList){
-    process **indirect = procList; 
-    process *currProc;
-    while ((currProc = *indirect) != NULL){
-        if (currProc->status == TERMINATED){
-            *indirect = currProc->next;
-            freeProcess(currProc);
+void deleteTerminatedProcesses(process **process_list)
+{
+    process **indirect = process_list; 
+    process *curr_process;
+
+    while ((curr_process = *indirect) != NULL)
+    {
+        if (curr_process->status == TERMINATED)
+        {
+            *indirect = curr_process->next;
+            freeProcess(curr_process);
         }
-        else{
-            indirect = &currProc->next;
+        else
+        {
+            indirect = &curr_process->next;
         }
     }
 }
-void updateProcessStatus(process *procList, int pid, int status){
-    process *currProcess = procList;
-    while (currProcess != NULL){
-        if (currProcess->pid == pid){
+void updateProcessStatus(process *process_list, int pid, int status)
+{
+    process *currProcess = process_list;
+    while (currProcess != NULL)
+    {
+        if (currProcess->pid == pid)
+        {
             currProcess->status = status;
             break;
         }
@@ -101,10 +120,10 @@ void updateProcessStatus(process *procList, int pid, int status){
     }
 }
 
-void updateProcessList(process **procList) {
+void updateProcessList(process **process_list) {
     int updateThis = 0;
     process *curr;
-    for (curr = *procList; curr != NULL; curr = curr->next) {
+    for (curr = *process_list; curr != NULL; curr = curr->next) {
         int res = waitpid(curr->pid, &updateThis, WCONTINUED | WNOHANG | WUNTRACED );
         if (res == 0) {
             updateProcessStatus(curr, curr->pid, RUNNING);
@@ -123,28 +142,48 @@ void updateProcessList(process **procList) {
         }
     }
 }
+void deleteTerminatedProcesses(process **process_list)
+{
+    process **indirect = process_list; 
+    process *curr_process;
+    while ((curr_process = *indirect) != NULL)
+    {
+        if (curr_process->status == TERMINATED)
+        {
+            *indirect = curr_process->next;
+            freeProcess(curr_process);
+        }
+        else
+        {
+            indirect = &curr_process->next;
+        }
+    }
+}
 
-
-void printProcessList(process** procList) {
-    updateProcessList(procList);
+void printProcessList(process** process_list) {
+    updateProcessList(process_list);
     printf("PID\t\tCommand\t\tSTATUS\n");
-    for (process *currProcess = *procList; currProcess != NULL; currProcess = currProcess->next){
+    for (process *currProcess = *process_list; currProcess != NULL; currProcess = currProcess->next)
+    {
         printProcess(currProcess);
     }
-    deleteTerminatedProcesses(procList);
+
+    deleteTerminatedProcesses(process_list);
 }
 
 /* Free all memory allocated for the process list */
-void freeProcessList(process** procList) {
-    process *currProc = (*procList);
+void freeProcessList(process** process_list) {
+     process *curr_process = process_list;
     process *next_process;
+
     // Iterate through the process list using a while loop
-    while (currProc != NULL){
-        next_process = currProc->next; // Save the next process in the list
-        currProc->cmd->next = NULL;    // Detach the command from the list
-        freeCmdLines(currProc->cmd);   // Free the command line
-        free(currProc);                // Free the current process
-        currProc = next_process;       // Move on to the next process in the list
+    while (curr_process != NULL)
+    {
+        next_process = curr_process->next; // Save the next process in the list
+        curr_process->cmd->next = NULL;    // Detach the command from the list
+        freeCmdLines(curr_process->cmd);   // Free the command line
+        free(curr_process);                // Free the current process
+        curr_process = next_process;       // Move on to the next process in the list
     }
 }
 
@@ -236,6 +275,7 @@ void execute(cmdLine *pCmdLine) {
             return;
         }
         fprintf(stderr, "(parent_process>forking...)\n");
+        
         // Fork the first child process
         if ((c1pid = fork()) == -1) { 
             perror("ERROR: fork() failed for child1");
@@ -357,7 +397,7 @@ int main(int argc, char **argv) {
         }    
     }
     freeCmdLines(parsedLine);
-    freeProcessList(&processList);
+    freeProcessList(processList);
     return 0;
 }
 
