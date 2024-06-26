@@ -14,4 +14,4 @@ looper.o: Looper.c
 	gcc -m32 -g -Wall -c -o looper.o Looper.c 
 .PHONY: clean 
 clean: 
-	rm -f *.o myshell
+	rm -f *.o myshell mypipeline
