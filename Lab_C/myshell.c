@@ -26,7 +26,7 @@ typedef struct process{
 
 process *processList = NULL; 
 
-void addProcess(process** procList, cmdLine* cmd, pid_t pid) {
+void addProcess(process** process_list, cmdLine* cmd, pid_t pid) {
     process *new_process = (process*)malloc(sizeof(process));
     if (!new_process) {
         perror("ERROR: malloc() failed");
@@ -35,8 +35,8 @@ void addProcess(process** procList, cmdLine* cmd, pid_t pid) {
     new_process->cmd = cmd;
     new_process->pid = pid;
     new_process->status = RUNNING;
-    new_process->next = *procList;
-    *procList = new_process;
+    new_process->next = *process_list;
+    *process_list = new_process;
 }
 
 void printProcess(process *Process){
@@ -44,11 +44,10 @@ void printProcess(process *Process){
         char command[200] = "";
         for (int i = 0; i < (Process->cmd->argCount); ++i){
             if (i > 0){
-                strcat(command, " ");
+                strcat(command, " "); // If it's not the first argument, add a space before the argument
             }
             strcat(command, Process->cmd->arguments[i]);
         }
-
         const char *statusString;
         if (Process->status == TERMINATED)
         {
@@ -60,7 +59,6 @@ void printProcess(process *Process){
         else{
             statusString = "Suspended";
         }
-
         printf("%d\t\t%s\t\t%s\n", Process->pid, command, statusString);
     }
 }
@@ -68,75 +66,77 @@ void printProcess(process *Process){
 void freeProcess(process *process)
 {
     if (process){
-        if (process->cmd){
+        if ((*process).cmd){
             process->cmd->next = NULL;
-            freeCmdLines(process->cmd);
+            freeCmdLines((*process).cmd);
         }
         free(process);
         process = NULL;
     }
 }
 
-void deleteTerminatedProcesses(process **procList){
-    process **indirect = procList; 
-    process *currProc;
-    while ((currProc = *indirect) != NULL){
-        if (currProc->status == TERMINATED){
-            *indirect = currProc->next;
-            freeProcess(currProc);
+void deleteTerminatedProcesses(process **process_list){
+    process **indirect = process_list; 
+    process *currProcess;
+    while ((currProcess = *indirect) != NULL){
+        if ((*currProcess).status == TERMINATED){
+            *indirect = (*currProcess).next;
+            freeProcess(currProcess);
         }
         else{
-            indirect = &currProc->next;
+            indirect = &currProcess->next;
         }
     }
 }
-void updateProcessStatus(process *procList, int pid, int status){
-    process *currProcess = procList;
+
+void updateProcessStatus(process *process_list, int pid, int status){
+    process *currProcess = process_list;
     while (currProcess != NULL){
-        if (currProcess->pid == pid){
-            currProcess->status = status;
+        if ((*currProcess).pid == pid){
+            (*currProcess).status = status;
             break;
         }
-        currProcess = currProcess->next;
+        currProcess = (*currProcess).next;
     }
 }
 
-void updateProcessList(process **procList) {
-    int updateThis = 0;
-    process *curr;
-    for (curr = *procList; curr != NULL; curr = curr->next) {
-        int res = waitpid(curr->pid, &updateThis, WCONTINUED | WNOHANG | WUNTRACED );
-        if (res == 0) {
-            updateProcessStatus(curr, curr->pid, RUNNING);
-        } else if (res == -1) {
-            updateProcessStatus(curr, curr->pid, TERMINATED);
-        } else {
-            if (WIFEXITED(updateThis) || WIFSIGNALED(updateThis)) {
-                updateProcessStatus(curr, curr->pid, TERMINATED);
+
+void updateProcessList(process **process_list) {
+    int toUpdate = 0;
+    process *currProcess;
+    for (currProcess = *process_list; currProcess != NULL; currProcess = (*currProcess).next) {
+        int status = waitpid((*currProcess).pid, &toUpdate, WCONTINUED | WNOHANG | WUNTRACED ); // Use waitpid with WNOHANG to check the process's status
+        if (status == 0) { // If waitpid returns 0, the process is still running
+            updateProcessStatus(currProcess, (*currProcess).pid, RUNNING);
+        } else if (status == -1) { // If waitpid returns -1, the process does not exist
+            updateProcessStatus(currProcess, (*currProcess).pid, TERMINATED);
+        } else { // If waitpid returns the process ID, the process has changed state (stopped, statusumed, or terminated)
+            if (WIFEXITED(toUpdate) || WIFSIGNALED(toUpdate)) {
+                updateProcessStatus(currProcess, (*currProcess).pid, TERMINATED);
             } 
-            else if (WIFCONTINUED(updateThis)) {
-                updateProcessStatus(curr, curr->pid, RUNNING);
+            else if (WIFCONTINUED(toUpdate)) {
+                updateProcessStatus(currProcess, (*currProcess).pid, RUNNING);
             }
-            else if (WIFSTOPPED(updateThis)) {
-                updateProcessStatus(curr, curr->pid, SUSPENDED);
+            else if (WIFSTOPPED(toUpdate)) {
+                updateProcessStatus(currProcess, (*currProcess).pid, SUSPENDED);
             } 
         }
     }
 }
 
 
-void printProcessList(process** procList) {
-    updateProcessList(procList);
+void printProcessList(process** process_list) {
+    updateProcessList(process_list);
     printf("PID\t\tCommand\t\tSTATUS\n");
-    for (process *currProcess = *procList; currProcess != NULL; currProcess = currProcess->next){
+    for (process *currProcess = *process_list; currProcess != NULL; currProcess = (*currProcess).next){
         printProcess(currProcess);
     }
-    deleteTerminatedProcesses(procList);
+    deleteTerminatedProcesses(process_list);
 }
 
 /* Free all memory allocated for the process list */
-void freeProcessList(process** procList) {
-    process *currProc = (*procList);
+void freeProcessList(process** process_list) {
+    process *currProc = (*process_list);
     process *next_process;
     // Iterate through the process list using a while loop
     while (currProc != NULL){
@@ -201,8 +201,9 @@ void execute(cmdLine *pCmdLine) {
             pid_t pid = atoi(pCmdLine->arguments[1]); 
             if (kill(pid, SIGCONT) == 0) { // Send SIGCONT signal to wake up the process
                 printf("Process %d woke up\n", pid);
+                updateProcessStatus(processList, pid, RUNNING); // Update the process status
             } else {
-                perror("ERROR: kill()"); 
+                perror("ERROR: alarm failed\n"); 
             }
         }
     } else if (strcmp(pCmdLine->arguments[0], "blast") == 0) { // Check if the command is "blast"
@@ -213,8 +214,9 @@ void execute(cmdLine *pCmdLine) {
             pid_t pid = atoi(pCmdLine->arguments[1]); 
             if (kill(pid, SIGKILL) == 0) { // Send SIGKILL signal to terminate the process
                 printf("Process %d terminated\n", pid);
+                updateProcessStatus(processList, pid, TERMINATED); // Update the process status
             } else {
-                perror("ERROR: kill() failed\n"); 
+                perror("ERROR: blast() failed\n"); 
             } 
         }
     }
@@ -282,13 +284,28 @@ void execute(cmdLine *pCmdLine) {
         fprintf(stderr, "(parent_process>closing the read end of the pipe...)\n");
         fprintf(stderr, "(parent_process>waiting for child processes to terminate...)\n");
         waitpid(c1pid, NULL, 0);
+        updateProcessStatus(processList, c1pid, TERMINATED); // Update status to TERMINATED
         waitpid(c2pid, NULL, 0);
+        updateProcessStatus(processList, c2pid, TERMINATED); // Update status to TERMINATED
         fprintf(stderr, "(parent_process>exiting...)\n");
     }
     // Check for the "procs" command
     else if (strcmp(pCmdLine->arguments[0], "procs") == 0) {
-        freeCmdLines(pCmdLine); /////// ???????????
+        //freeCmdLines(pCmdLine); /////// ???????????
         printProcessList(&processList);
+    }
+    else if (strcmp(pCmdLine->arguments[0], "sleep") == 0) { // Check if the command is "sleep"
+        if (pCmdLine->arguments[1] == NULL) {
+            fprintf(stderr, "ERROR: No PID provided\n");
+        } else {
+            pid_t pid = atoi(pCmdLine->arguments[1]);
+            if (kill(pid, SIGTSTP) == 0) { // Send SIGTSTP signal to suspend the process
+                printf("Process %d suspended\n", pid);
+                updateProcessStatus(processList, pid, SUSPENDED); // Update the process status
+            } else {
+                perror("ERROR: sleep() failed\n");
+            }
+        }
     }
     else {
         pid_t p = fork();
@@ -303,6 +320,7 @@ void execute(cmdLine *pCmdLine) {
             if ((*pCmdLine).blocking) { // if blocking, wait for the child process to finish
                 int status; // stores the exit status of the child process
                 waitpid(p, &status, 0); // If blocking is false, the shell will not wait for the child process to finish.
+                updateProcessStatus(processList, p, TERMINATED); // Update status to TERMINATED
                 process *current = processList;
                 while (current != NULL) {
                     if (current->pid == p) {

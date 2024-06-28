@@ -4,8 +4,8 @@ mypipeline: mypipeline.o
 	gcc -g -m32 -Wall  -o mypipeline mypipeline.o 
 mypipeline.o: mypipeline.c 
 	gcc -m32 -g -Wall -c -o mypipeline.o mypipeline.c 
-looper: Looper.o
-	gcc -g -m32 -Wall -o looper Looper.o
+looper: looper.o
+	gcc -g -m32 -Wall -o looper looper.o
 myshell.o: myshell.c LineParser.h
 	gcc -m32 -g -Wall -c -o myshell.o myshell.c 
 LineParser.o: LineParser.c LineParser.h
