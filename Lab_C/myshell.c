@@ -14,6 +14,12 @@
 #define RUNNING 1
 #define SUSPENDED 0
 
+#define HISTLEN 20
+#define MAX_BUFF 200
+char history[HISTLEN][MAX_BUFF];
+int oldest = 0;
+int newest = 0;
+
 int debug = 0;
 
 typedef struct process{
@@ -22,7 +28,6 @@ typedef struct process{
     int status;              /* status of the process: RUNNING/SUSPENDED/TERMINATED */
     struct process *next;	 /* next process in chain */
 } process;
-
 
 process *processList = NULL; 
 
@@ -123,8 +128,6 @@ void updateProcessList(process **process_list) {
         }
     }
 }
-
-
 void printProcessList(process** process_list) {
     updateProcessList(process_list);
     printf("PID\t\tCommand\t\tSTATUS\n");
@@ -138,14 +141,31 @@ void printProcessList(process** process_list) {
 void freeProcessList(process** process_list) {
     process *currProc = (*process_list);
     process *next_process;
-    // Iterate through the process list using a while loop
     while (currProc != NULL){
         next_process = currProc->next; // Save the next process in the list
-        currProc->cmd->next = NULL;    // Detach the command from the list
-        freeCmdLines(currProc->cmd);   // Free the command line
-        free(currProc);                // Free the current process
+        freeProcess(currProc);
         currProc = next_process;       // Move on to the next process in the list
     }
+    *process_list = NULL;
+}
+
+char *findCommandHistory(int index)
+{
+    if (index < 0 || index >= HISTLEN){
+        fprintf(stderr, "ERROR: history command - No such command in history\n");
+        return NULL;
+    }
+    int currIndex = oldest;
+    while (currIndex != index && currIndex < newest){ // find the index
+        currIndex = (currIndex + 1) % HISTLEN;
+    }
+    if (currIndex == newest)
+    {
+        fprintf(stderr, "ERROR: history command - No such command in history\n");
+        return NULL;
+    }
+    printf("%s\n", history[currIndex]);
+    return history[currIndex];
 }
 
 
@@ -163,34 +183,37 @@ void executeCommand(cmdLine *pCmdLine) {
         }
         close(input_fd);
     }
-    
     // Handle output redirection
     if (pCmdLine->outputRedirect != NULL) {
         int output_fd = open(pCmdLine->outputRedirect, O_WRONLY | O_CREAT | O_TRUNC, 0644);
         if (output_fd == -1) {
             perror("ERROR: open() failed for output redirection");
+            freeCmdLines(pCmdLine);
             exit(1);
         }
         if (dup2(output_fd, STDOUT_FILENO) == -1) {
             perror("ERROR: dup2() failed for output redirection");
+            freeCmdLines(pCmdLine);
             exit(1);
         }
         close(output_fd);
     }
-    
     // Execute the command
     if (execvp(pCmdLine->arguments[0], pCmdLine->arguments) == -1) {
         processList->status = TERMINATED;
         perror("ERROR: execvp() failed");
+        freeCmdLines(pCmdLine);
         exit(1);
     }
 }
+
 
 void execute(cmdLine *pCmdLine) {
     if (strcmp(pCmdLine->arguments[0], "cd") == 0) { 
         if (chdir(pCmdLine->arguments[1]) == -1) {  // arguments[1] is the path to the directory
             fprintf(stderr, "cd: No such file or directory\n");
         }
+        freeCmdLines(pCmdLine);
     }
     // Arguments[0] is the command name
     else if (strcmp(pCmdLine->arguments[0], "alarm") == 0) { // Check if the command is "alarm"
@@ -206,6 +229,7 @@ void execute(cmdLine *pCmdLine) {
                 perror("ERROR: alarm failed\n"); 
             }
         }
+        freeCmdLines(pCmdLine);
     } else if (strcmp(pCmdLine->arguments[0], "blast") == 0) { // Check if the command is "blast"
         if(pCmdLine->arguments[1] == NULL) {
             fprintf(stderr, "ERROR: No PID provided\n");
@@ -219,28 +243,44 @@ void execute(cmdLine *pCmdLine) {
                 perror("ERROR: blast() failed\n"); 
             } 
         }
+        freeCmdLines(pCmdLine);
+    }
+    else if (strcmp(pCmdLine->arguments[0], "history") == 0) { // Check if the command is "history"
+        int index = 0;
+        while (index != newest){
+            printf("%d: %s\n", index + 1, history[index]);
+            index = (index + 1) % HISTLEN;
+        }
+        freeCmdLines(pCmdLine);
     }
     else if (pCmdLine->next != NULL) { // Check if the command is a pipe 
         int pipeFd[2]; // Array to hold the read and write file descriptors for the pipe - pipeFd[0] read, pipeFd[1] write
         pid_t c1pid, c2pid; // Process IDs for the child processes
         if (pipe(pipeFd) == -1) { // Create the pipe and store the file descriptors in pipeFd
             perror("ERROR: pipe() failed");
+            freeCmdLines(pCmdLine);
+            freeCmdLines(pCmdLine->next);
             exit(1);
         }
-        
         // Check for invalid redirections
         if (pCmdLine->outputRedirect != NULL) {
             fprintf(stderr, "ERROR: Output redirection for the first command is invalid\n");
+            freeCmdLines(pCmdLine);
+            freeCmdLines(pCmdLine->next);
             return;
         }
         if (pCmdLine->next->inputRedirect != NULL) {
             fprintf(stderr, "ERROR: Input redirection for the second command is invalid\n");
+            freeCmdLines(pCmdLine);
+            freeCmdLines(pCmdLine->next);
             return;
         }
         fprintf(stderr, "(parent_process>forking...)\n");
         // Fork the first child process
         if ((c1pid = fork()) == -1) { 
             perror("ERROR: fork() failed for child1");
+            freeCmdLines(pCmdLine);
+            freeCmdLines(pCmdLine->next);
             exit(1);
         }
         if (c1pid == 0) { // Child1 process
@@ -248,12 +288,16 @@ void execute(cmdLine *pCmdLine) {
             close(STDOUT_FILENO); // Close standard output
             if (dup2(pipeFd[1], STDOUT_FILENO) == -1) { // Duplicate the write end of the pipe to standard output
                 perror("ERROR: dup2() failed for child1");
+                freeCmdLines(pCmdLine);
+                freeCmdLines(pCmdLine->next);
                 exit(1);
             }
             close(pipeFd[1]); // Close the original write end of the pipe
             close(pipeFd[0]); // Close the read end of the pipe
             fprintf(stderr, "(child1>going to execute the first cmd)\n");
             executeCommand(pCmdLine);
+            freeCmdLines(pCmdLine);
+            freeCmdLines(pCmdLine->next);
             exit(1);
         }
         addProcess(&processList, pCmdLine, c1pid);
@@ -264,6 +308,8 @@ void execute(cmdLine *pCmdLine) {
         // Fork the second child process
         if ((c2pid = fork()) == -1) { 
             perror("ERROR: fork() failed for child2");
+            freeCmdLines(pCmdLine);
+            freeCmdLines(pCmdLine->next);
             exit(1);
         }
         if (c2pid == 0) { // Child2 process
@@ -271,11 +317,15 @@ void execute(cmdLine *pCmdLine) {
             close(STDIN_FILENO); // Close standard input
             if (dup2(pipeFd[0], STDIN_FILENO) == -1) { // Duplicate the read end of the pipe to standard input
                 perror("ERROR: dup2() failed for child2");
+                freeCmdLines(pCmdLine);
+                freeCmdLines(pCmdLine->next);
                 exit(1);
             }
             close(pipeFd[0]); // Close the original read end of the pipe
             fprintf(stderr, "(child2>going to execute cmd: )\n");
             executeCommand(pCmdLine->next);
+            freeCmdLines(pCmdLine);
+            freeCmdLines(pCmdLine->next);
             exit(1);
         }
         addProcess(&processList, pCmdLine, c2pid);
@@ -288,10 +338,12 @@ void execute(cmdLine *pCmdLine) {
         waitpid(c2pid, NULL, 0);
         updateProcessStatus(processList, c2pid, TERMINATED); // Update status to TERMINATED
         fprintf(stderr, "(parent_process>exiting...)\n");
+        freeCmdLines(pCmdLine);
+        freeCmdLines(pCmdLine->next);
     }
     // Check for the "procs" command
     else if (strcmp(pCmdLine->arguments[0], "procs") == 0) {
-        //freeCmdLines(pCmdLine); /////// ???????????
+        freeCmdLines(pCmdLine); 
         printProcessList(&processList);
     }
     else if (strcmp(pCmdLine->arguments[0], "sleep") == 0) { // Check if the command is "sleep"
@@ -306,15 +358,19 @@ void execute(cmdLine *pCmdLine) {
                 perror("ERROR: sleep() failed\n");
             }
         }
+        freeCmdLines(pCmdLine);
     }
     else {
         pid_t p = fork();
         if (p == -1) {
             perror("ERROR: fork() failed\n");
+            freeCmdLines(pCmdLine);
             exit(1);
         }
         if (p == 0) {
             executeCommand(pCmdLine);
+            freeCmdLines(pCmdLine);
+            exit(1);
         } else {
             addProcess(&processList, pCmdLine, p);
             if ((*pCmdLine).blocking) { // if blocking, wait for the child process to finish
@@ -333,18 +389,15 @@ void execute(cmdLine *pCmdLine) {
         }
     }
 }
-
 int main(int argc, char **argv) {
     char cwd[PATH_MAX]; 
     char input[2048]; 
-    cmdLine *parsedLine;
-    //process *processList = NULL; 
+    cmdLine *parsedLine; 
     for (int i = 0; i < argc; i++) {
         if (strcmp(argv[i], "-d") == 0) {
             debug = 1;
         }
     }
-
     while (1) {
         if (getcwd(cwd, sizeof(cwd)) != NULL) { // get current working directory
             printf("%s\n", cwd); 
@@ -358,7 +411,42 @@ int main(int argc, char **argv) {
             if (len > 0 && input[len - 1] == '\n') {
                 input[len - 1] = '\0'; // remove newline character
             }
+            if (strcmp(input, "!!") == 0) {
+                if (newest > 0) { // if there are commands in the history
+                    int index = (newest - 1) % HISTLEN;
+                    strncpy(input, history[index], sizeof(input));
+                    printf("Executing command: %s\n", input);
+                } else {
+                    fprintf(stderr, "No commands in history.\n");
+                    continue;
+                }
+            } else if (input[0] == '!' && (input[1] >= '0' && input[1] <= '9')) {
+                int n = atoi(&input[1]);
+                if (n >= 1 && n <= HISTLEN && n - 1 < newest) {
+                    int index = (oldest + n - 1) % HISTLEN;
+                    if (history[index][0] != '\0') {
+                        strncpy(input, history[index], sizeof(input));
+                        printf("Executing command: %s\n", input);
+                    } else {
+                        fprintf(stderr, "No such command in history.\n");
+                        continue;
+                    }
+                } else {
+                    fprintf(stderr, "Invalid history reference.\n");
+                    continue;
+                }
+            } else {
+                // Update history with the current command
+                if (strncmp(input, "!", 1) != 0) { // if not a history command itself
+                    if (history[newest][0] != '\0') { // queue is full
+                        oldest = (oldest + 1) % HISTLEN;
+                    }
+                    strncpy(history[newest], input, sizeof(history[newest]));
+                    newest = (newest + 1) % HISTLEN;
+                }
+            }
             if (strcmp(input, "quit") == 0) {
+                freeCmdLines(parsedLine);
                 break;
             }
             parsedLine = parseCmdLines(input);
@@ -367,14 +455,13 @@ int main(int argc, char **argv) {
                 continue;
             }
             execute(parsedLine);
-            //freeCmdLines(parsedLine); /////////////////to check
         } else {
             perror("ERROR: fgets() failed\n");
             printf("\n");
+            freeProcessList(&processList);
             return 1; 
         }    
     }
-    freeCmdLines(parsedLine);
     freeProcessList(&processList);
     return 0;
 }

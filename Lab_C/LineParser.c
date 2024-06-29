@@ -5,7 +5,7 @@
 #include "LineParser.h"
 
 #ifndef NULL
-    #define NULL 0
+#define NULL 0
 #endif
 
 #define FREE(X) if(X) free((void*)X)
